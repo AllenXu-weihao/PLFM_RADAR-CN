@@ -128,12 +128,20 @@ assign cfar_busy = (state != ST_IDLE);
 
 // ============================================================================
 // MAGNITUDE COMPUTATION (combinational)
+// [OPT-IMPROVE] Alpha-max-plus-beta-min magnitude approximation.
+// Original: |I|+|Q| (overestimates by up to 41.4% at 45°)
+// Optimized: max(|I|,|Q|) + min(|I|,|Q|)/2 (max 11.8% error)
+// This improves CFAR threshold accuracy, reducing false alarms at
+// diagonal positions and improving detection of off-axis targets.
+// Cost: 1 extra adder + 1 shifter (negligible vs BRAM/DSP budget).
 // ============================================================================
 wire signed [15:0] dop_i = doppler_data[15:0];
 wire signed [15:0] dop_q = doppler_data[31:16];
 wire [15:0] abs_i = dop_i[15] ? (~dop_i + 16'd1) : dop_i;
 wire [15:0] abs_q = dop_q[15] ? (~dop_q + 16'd1) : dop_q;
-wire [MAG_WIDTH-1:0] cur_mag = {1'b0, abs_i} + {1'b0, abs_q};
+wire [15:0] mag_max = (abs_i > abs_q) ? abs_i : abs_q;
+wire [15:0] mag_min = (abs_i > abs_q) ? abs_q : abs_i;
+wire [MAG_WIDTH-1:0] cur_mag = {1'b0, mag_max} + {2'b0, mag_min[15:1]}; // max + min/2
 
 // ============================================================================
 // MAGNITUDE BRAM (2048 x 17 bits)

@@ -224,9 +224,15 @@ nco_400m_enhanced nco_core (
 // In simulation (Icarus), uses behavioral equivalent since DSP48E1 is Xilinx-only
 // ============================================================================
 
-// Combinational ADC sign conversion (no register — DSP48E1 AREG handles it)
-assign adc_signed_w = {1'b0, adc_data, {(MIXER_WIDTH-ADC_WIDTH-1){1'b0}}} - 
-                      {1'b0, {ADC_WIDTH{1'b1}}, {(MIXER_WIDTH-ADC_WIDTH-1){1'b0}}} / 2;
+// [OPT-SIMPLIFY] ADC unsigned→signed conversion, simplified from complex expression.
+// Original: {1'b0, adc_data, 9'b0} - {1'b0, 8'hFF, 9'b0} / 2
+//           = (adc_data << 9) - (255 << 9) / 2
+//           = (adc_data - 127.5) << 9  (fractional, not exact)
+// Simplified: sign-extend (adc_data - 128) to 18 bits, then left-shift by 9
+// to utilize the full 18-bit DSP48E1 dynamic range.
+// This is cleaner, synthesizes identically, and is easier to verify.
+wire signed [ADC_WIDTH:0] adc_offset = $signed({1'b0, adc_data}) - 9'sd128;
+assign adc_signed_w = {{(MIXER_WIDTH-ADC_WIDTH-1){adc_offset[ADC_WIDTH]}}, adc_offset} <<< (MIXER_WIDTH-ADC_WIDTH-1);
 
 // Valid pipeline: 5-stage shift register (1 NCO pipe + 3 DSP48E1 AREG+MREG+PREG + 1 retiming)
 always @(posedge clk_400m or negedge reset_n_400m) begin

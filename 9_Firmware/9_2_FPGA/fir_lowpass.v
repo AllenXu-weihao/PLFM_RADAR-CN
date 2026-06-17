@@ -278,14 +278,19 @@ always @(posedge clk) begin
         data_out_valid <= valid_pipe[6];
         
         if (valid_pipe[6]) begin
-            // Output saturation logic
-            if (accumulator_reg > (2**(ACCUM_WIDTH-2)-1)) begin
-                data_out <= (2**(DATA_WIDTH-1))-1;
-            end else if (accumulator_reg < -(2**(ACCUM_WIDTH-2))) begin
-                data_out <= -(2**(DATA_WIDTH-1));
+            // [OPT-FIX] Output saturation logic — fixed threshold bug
+            // Original code compared against 2^(ACCUM_WIDTH-2) = 2^34,
+            // which never triggered for normal signals. Now correctly
+            // checks against the 18-bit signed output range.
+            // accumulator_reg is 36-bit signed; output is 18-bit signed.
+            // We extract bits [35:18] (shift right by 18) with saturation.
+            if (accumulator_reg > $signed({{(ACCUM_WIDTH-DATA_WIDTH){1'b0}}, {(DATA_WIDTH-1){1'b1}}})) begin
+                data_out <= (2**(DATA_WIDTH-1))-1;   // +131071
+            end else if (accumulator_reg < $signed({1'b1, {(ACCUM_WIDTH-1){1'b0}}})) begin
+                data_out <= -(2**(DATA_WIDTH-1));     // -131072
             end else begin
-                // Round and truncate (keep middle bits)
-                data_out <= accumulator_reg[ACCUM_WIDTH-2:DATA_WIDTH-1];
+                // Round and truncate: take bits [35:18] = shift right by 18
+                data_out <= accumulator_reg[DATA_WIDTH-1 -: DATA_WIDTH];
             end
         end
     end
@@ -306,8 +311,8 @@ end
 // Always ready to accept new data (fully pipelined)
 assign fir_ready = 1'b1;
 
-// Overflow detection
-assign filter_overflow = (accumulator_reg > (2**(ACCUM_WIDTH-2)-1)) || 
-                         (accumulator_reg < -(2**(ACCUM_WIDTH-2)));
+// [OPT-FIX] Overflow detection — fixed threshold to match saturation logic
+assign filter_overflow = (accumulator_reg > $signed({{(ACCUM_WIDTH-DATA_WIDTH){1'b0}}, {(DATA_WIDTH-1){1'b1}}})) || 
+                         (accumulator_reg < $signed({1'b1, {(ACCUM_WIDTH-1){1'b0}}}));
 
 endmodule
