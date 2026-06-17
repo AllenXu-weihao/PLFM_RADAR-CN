@@ -1,14 +1,38 @@
 `timescale 1ns / 1ps
 
 // ============================================================================
-// CDC FOR MULTI-BIT DATA (ADVANCED)
-// Uses Gray-code encoding with synchronous reset on sync chain to avoid
-// latch inference. ASYNC_REG attributes ensure Vivado places synchronizer
-// FFs in the same slice for optimal MTBF.
+// cdc_modules.v — 跨时钟域（CDC）同步器模块库
+// ============================================================================
+//
+// 【中文功能概述】
+// 本文件包含 AERIS-10 雷达系统中使用的所有 CDC（Clock Domain Crossing）同步器模块。
+// 由于系统存在多个时钟域（400MHz / 120MHz / 100MHz / USB 时钟），正确的 CDC 设计
+// 对系统的可靠性和时序收敛至关重要。
+//
+// 【模块清单】
+//   1. cdc_adc_to_processing      — 多比特 Gray 编码 + Toggle 同步（ADC→处理链）
+//   2. cdc_single_bit             — 单比特多级同步器（消除亚稳态）
+//   3. cdc_handshake              — 带握手的可靠跨时钟域传输
+//   4. cdc_single_bit_sync_reset  — 同步复位的单比特同步器
+//
+// 【设计原则】
+//   - 使用 Gray 编码保证多比特跨时钟域每次只有 1 bit 变化（避免错位）
+//   - Toggle 方式传递脉冲信号（避免窄脉冲丢失）
+//   - ASYNC_REG 属性确保同步触发器放在同一 Slice 中（最大化 MTBF）
+//   - 同步复位避免锁存器推断
+//
+// ============================================================================
+
+// ============================================================================
+// 模块 1：多比特 CDC — Gray 编码 + Toggle 同步
+// ============================================================================
+// 用于将 ADC 数据从 400MHz 域安全地传送到 100MHz 处理域。
+// 采用 Gray 编码确保跨时钟域数据完整性，
+// 结合 Toggle 机制确保有效脉冲不会被丢失。
 // ============================================================================
 module cdc_adc_to_processing #(
-    parameter WIDTH = 8,
-    parameter STAGES = 3
+    parameter WIDTH = 8,           // 数据位宽（默认 8 位）
+    parameter STAGES = 3           // 同步器级数（默认 3 级，平衡 MTBF 与延迟）
 )(
     input wire src_clk,
     input wire dst_clk,
@@ -24,12 +48,15 @@ module cdc_adc_to_processing #(
 `endif
 );
 
-    // Gray encoding for safe CDC
+    // ========== Gray 编码函数（用于安全跨时钟域传输）==========
+    // Gray 码保证相邻值之间只有 1 bit 变化，
+    // 避免多比特数据在跨时钟域时因各 bit 延迟不同而"错位"
     function [WIDTH-1:0] binary_to_gray;
         input [WIDTH-1:0] binary;
-        binary_to_gray = binary ^ (binary >> 1);
+        binary_to_gray = binary ^ (binary >> 1);   // 标准 Gray 编码公式
     endfunction
     
+    // ========== Gray 解码函数 ==========
     function [WIDTH-1:0] gray_to_binary;
         input [WIDTH-1:0] gray;
         reg [WIDTH-1:0] binary;

@@ -1,14 +1,54 @@
 `timescale 1ns / 1ps
 
+// ============================================================================
+// fir_lowpass_parallel_enhanced.v — 32 抽头低通 FIR 滤波器
+// ============================================================================
+//
+// 【中文功能概述】
+// 32 抽头对称系数低通 FIR 滤波器，9 级流水线设计，运行在 100MHz。
+// 位于 CIC 抽取器之后，作为 DDC 链路的最后一级，滤除高频混叠分量。
+//
+// 【问题背景】
+// 原始全组合逻辑加法树对 32 个乘积项求和，
+// 造成 31 级深度的 DSP48E1 PCOUT 级联链，延时 56.6ns（WNS = -48.325ns）。
+//
+// 【解决方案：5 级二进制加法树 + BREG/MREG 流水线】
+// 每级最多执行一次两两加法（~1.7ns DSP 跳跃），轻松适配 10ns 时钟周期。
+//
+// 【流水线阶段详解】
+//   Cycle 0: data_valid → 移位延迟线 + 锁存系数（BREG）
+//   Cycle 1: 组合逻辑乘法 → 锁存到 mult_reg（MREG）
+//   Cycle 2: 32 个乘积的 16 个两两求和（Level 0）
+//   Cycle 3: 8 个两两求和（Level 1）
+//   Cycle 4: 4 个两两求和（Level 2）
+//   Cycle 5: 2 个两两求和（Level 3）
+//   Cycle 6: 最终 1 个求和 → accumulator_reg（Level 4）
+//   Cycle 7: 输出饱和/截断
+//
+// 【总延迟】data_valid 到 data_out_valid 共 9 个时钟周期
+//           （BREG+MREG 增加前为 7 周期，+2 周期用于 DSP48 流水线）
+// 【吞吐量】每周期 1 个样本（完全流水线）
+// 【注意】FIR 运行在 100MHz，输入数据从 400MHz 经 4x 抽取而来，
+//         有效样本约每 4 周期到达一个，因此 9 周期延迟完全透明。
+//
+// 【优化策略】USE_DSP="no" 强制加法在 fabric 中执行，
+//           节省 DSP48 资源留给 FFT 和匹配滤波器使用。
+//
+// 【我们的修复】修正了饱和逻辑阈值 bug：
+//   原 bug：比较阈值 2^34 远超实际范围，导致饱和永不触发
+//   修复后：正确的 ±131071/±131072 范围（18 位有符号数边界）
+//
+// ============================================================================
+
 module fir_lowpass_parallel_enhanced (
-    input wire clk,
-    input wire reset_n,
-    input wire signed [17:0] data_in,
-    input wire data_valid,
-    output reg signed [17:0] data_out,
-    output reg data_out_valid,
-    output wire fir_ready,
-    output wire filter_overflow
+    input wire clk,                        // 系统时钟 100MHz
+    input wire reset_n,                    // 异步复位（低有效）
+    input wire signed [17:0] data_in,      // 18 位输入数据（来自 CIC 抽取器）
+    input wire data_valid,                 // 数据有效信号
+    output reg signed [17:0] data_out,     // 18 位滤波输出
+    output reg data_out_valid,             // 输出有效信号
+    output wire fir_ready,                 // FIR 就绪标志
+    output wire filter_overflow            // 滤波器溢出标志
 );
 
 parameter TAPS = 32;

@@ -1,14 +1,52 @@
 `timescale 1ns / 1ps
 
+// ============================================================================
+// nco_400m_enhanced.v — 6级流水线 NCO 数字控制振荡器
+// ============================================================================
+//
+// 【中文功能概述】
+// 在 400MHz 时钟域生成 120MHz IF 的正弦/余弦查表输出。
+// 作为 DDC 模块的核心组件，为混频器提供本振信号。
+//
+// 【6 级流水线架构（满足 400MHz 时序收敛）】
+//
+//   Stage 1: 相位累加器更新（DSP48E1 P=P+C 模式）
+//            DSP48E1 执行：P_reg <= P_reg + C_port (frequency_tuning_word)
+//            P 寄存器输出即为相位累加器 —— 无需 CARRY4 链
+//            phase_accum_reg <= P_output[31:0]（fabric 寄存器捕获 DSP 输出）
+//
+//   Stage 2: 偏移相加（fabric 中完成，寄存器输出）
+//            phase_with_offset <= phase_accum_reg + {phase_offset, 16'b0}
+//            将 DSP→CARRY4 的长路径拆分为两级寄存器，消除关键路径
+//            （Build 6 时 WNS = -0.594ns，修复后消除）
+//
+//   Stage 3a: 寄存器 LUT 地址(lut_index)和象限判断(phase_with_offset)
+//            仅驱动 2 个寄存器（扇出最小，布线最短）
+//
+//   Stage 3b: LUT 读（用已寄存器的 lut_index）→ 寄存器幅值 + 象限
+//            已寄存器地址 → 组合逻辑 LUT6 读 → 寄存器输出
+//            消除布线主导的关键路径（Build 8 改善 -0.100ns）
+//
+//   Stage 4: 从已寄存器幅值计算取反 → 寄存化取反值
+//            （CARRY4 x4 链有寄存化输入，2.5ns 内轻松完成）
+//
+//   Stage 5: 象限符号应用 → sin_out, cos_out（纯 MUX 选择，无算术运算）
+//
+// 【总延迟】phase_valid 到 sin/cos 输出共 6 个时钟周期
+// 【LUT 表】64 点 1/4 波正弦表，ram_style="distributed" 强制使用 LUTRAM
+//           （不用 BRAM，因为 BRAM 在 400MHz 下难以时序收敛）
+//
+// ============================================================================
+
 module nco_400m_enhanced (
-    input wire clk_400m,
-    input wire reset_n,
-    input wire [31:0] frequency_tuning_word,
-    input wire phase_valid,
-    input wire [15:0] phase_offset,
-    output reg signed [15:0] sin_out,
-    output reg signed [15:0] cos_out,
-    output reg dds_ready
+    input wire clk_400m,                 // 400MHz 高速时钟
+    input wire reset_n,                   // 异步复位（低有效）
+    input wire [31:0] frequency_tuning_word,  // 频率调谐字（控制输出频率）
+    input wire phase_valid,               // 相位有效信号
+    input wire [15:0] phase_offset,       // 相位偏移（用于相位调制）
+    output reg signed [15:0] sin_out,     // 正弦输出（16 位有符号）
+    output reg signed [15:0] cos_out,     // 余弦输出（16 位有符号）
+    output reg dds_ready                  // DDS 就绪标志
 );
 
 // ============================================================================

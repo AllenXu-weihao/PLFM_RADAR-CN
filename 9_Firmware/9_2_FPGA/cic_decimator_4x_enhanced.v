@@ -1,4 +1,36 @@
-module cic_decimator_4x_enhanced (
+/**
+ * cic_decimator_4x_enhanced.v — 5级 CIC 4x 抽取滤波器
+ *
+ * 【中文功能概述】
+ * 本模块在 400MHz 时钟域实现 5 级 CIC（Cascaded Integrator-Comb）抽取滤波器。
+ * 作为 DDC 数字下变频链路的一部分，将采样率从 400MHz 降低到 100MHz（4x 抽取）。
+ *
+ * 【CIC 滤波器结构】
+ *   输入(18bit, 400MHz) → [5级积分器(Integrator)] → 4x抽取 → [5级梳状滤波器(Comb)] → 输出(18bit, 100MHz)
+ *
+ * 【关键设计——DSP48E1 原语级优化】
+ *   - 积分器链：使用 DSP48E1 PCOUT→PCIN 专用级联布线
+ *     * 相邻 DSP48E1 之间的专用硅片布线 = 零 fabric 延迟
+ *     * 保证在 7 系列 FPGA 上满足 400+ MHz 时序（任何速度等级）
+ *     * Integrator[0]: P=P+C (累加模式)，C=符号扩展输入
+ *     * Integrator[k]: P=P+PCIN (来自上一级的级联输出)
+ *
+ *   - 梳状滤波器 Comb[0]：使用 DSP48E1 CREG=1 吸收组合逻辑
+ *     * 消除 ~0.643ns 布线延迟的关键路径
+ *
+ *   - 全流水线设计：AREG/BREG/MREG/PREG 均启用
+ *
+ * 【位宽规划】
+ *   - ACC_WIDTH = 48：DSP48E1 原生位宽，CIC 使用模运算（溢出无害）
+ *   - COMB_WIDTH = 28：梳状部分工作位宽（18 + 5*log2(4) = 28）
+ *
+ * 【监控输出】
+ *   - saturation_detected：锁存的饱和检测标志
+ *   - max_value_monitor[7:0]：峰值幅度（用于增益控制反馈）
+ *
+ * Clock domain: clk (400 MHz)
+ * 资源：6 DSP48E1 + 若干 LUT/FF
+ */
     input wire clk,                 // 400MHz input clock
     input wire reset_n,
     input wire signed [17:0] data_in,  // 18-bit input

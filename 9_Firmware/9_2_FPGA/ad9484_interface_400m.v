@@ -1,44 +1,80 @@
+/**
+ * ad9484_interface_400m.v — AD9484 ADC LVDS 接口（400MSPS 双沿采样）
+ *
+ * 【中文功能概述】
+ * 本模块实现 AD9484 高速 ADC 的 LVDS 差分接口，使用 IDDR 原语捕获双沿数据，
+ * 实现 400 MSPS 的等效采样率。是整个接收链路的"最前端"——所有数据从这里进入 FPGA。
+ *
+ * 【AD9484 规格】
+ *   - 8 位分辨率，最高 500 MSPS（本系统运行在 400 MHz DCO）
+ *   - LVDS 差分数据输出 + LVDS 差分时钟输出（DCO）
+ *   - DDR 模式：时钟上下沿各采样一次数据
+ *
+ * 【时钟方案（关键设计）】
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │  adc_dco_p/n (400MHz LVDS)                          │
+ *   │    → IBUFDS（差分转单端）                            │
+ *   │    ├→ BUFIO（零延迟，驱动 IDDR 采样时钟）            │
+ *   │    │   ↑ I/O 时钟域专用缓冲器，不进 BUFG 全局网络     │
+ *   │    └→ BUFG（抖动清理后驱动 fabric 逻辑）             │
+ *   │        → MMCM 进一步去抖动（可选）                    │
+ *   └─────────────────────────────────────────────────────┘
+ *
+ * 【IDDR 采样模式】SAME_EDGE_PIPELINED
+ *   - 数据在时钟双沿采样，但在单边沿稳定输出
+ *   - Q1 = 上升沿数据，Q2 = 下降沿数据（均寄存化）
+ *
+ * 【多目标支持】
+ *   通过 XDC 约束（非 RTL 参数）适配不同 FPGA 板卡：
+ *   - XC7A200T (FBG484)：Bank 14 VCCO = 2.5V → LVDS_25
+ *   - XC7A50T  (FTG256)：Bank 14 VCCO = 3.3V → LVDS_33
+ *
+ * Clock domains:
+ *   - 输出域：clk_400m (400MHz, 来自 BUFIO/BUFG)
+ *   - 控制域：sys_clk (100MHz, 仅用于复位等慢速控制)
+ */
+
 module ad9484_interface_400m (
-    // ADC Physical Interface (LVDS)
-    input wire [7:0] adc_d_p,        // ADC Data P
-    input wire [7:0] adc_d_n,        // ADC Data N
-    input wire adc_dco_p,            // Data Clock Output P (400MHz)
-    input wire adc_dco_n,            // Data Clock Output N (400MHz)
+    // ========== ADC 物理接口（LVDS 差分对）==========
+    input wire [7:0] adc_d_p,          // ADC 数据正端 P（8 bit 差分）
+    input wire [7:0] adc_d_n,          // ADC 数据负端 N（8 bit 差分）
+    input wire adc_dco_p,              // 数据时钟输出正端 P（400MHz LVDS）
+    input wire adc_dco_n,              // 数据时钟输出负端 N
     
-    // System Interface
-    input wire sys_clk,              // 100MHz system clock (for control only)
-    input wire reset_n,
+    // ========== 系统接口 ==========
+    input wire sys_clk,                // 100MHz 系统时钟（仅用于控制信号）
+    input wire reset_n,                // 异步复位（低有效）
     
-    // Output at 400MHz domain
-    output wire [7:0] adc_data_400m, // ADC data at 400MHz
-    output wire adc_data_valid_400m, // Valid at 400MHz
-    output wire adc_dco_bufg         // Buffered 400MHz DCO clock for downstream use
+    // ========== 400MHz 域输出 ==========
+    output wire [7:0] adc_data_400m,   // ADC 数据（8bit，@400MHz 域）
+    output wire adc_data_valid_400m,   // 数据有效标志（@400MHz 域）
+    output wire adc_dco_bufg           // 缓冲后的 400MHz DCO 时钟（供下游使用）
 );
 
-// LVDS to single-ended conversion
-wire [7:0] adc_data;
-wire adc_dco;
+// ========== LVDS 差分转单端（LVDS to Single-Ended Conversion） ==========
+wire [7:0] adc_data;     // 单端数据（8 bit）
+wire adc_dco;            // 单端 DCO 时钟
 
-// IBUFDS for each data bit
-// NOTE: IOSTANDARD and DIFF_TERM are set via XDC constraints, not RTL
-// parameters, to support multiple FPGA targets with different bank voltages:
-//   - XC7A200T (FBG484): Bank 14 VCCO = 2.5V → LVDS_25
-//   - XC7A50T  (FTG256): Bank 14 VCCO = 3.3V → LVDS_33
+// ========== IBUFDS：每根数据线的差分缓冲器 ==========
+// 注意：IOSTANDARD 和 DIFF_TERM 通过 XDC 约束设置，而非 RTL 参数，
+//       以支持多种 FPGA 目标板的不同 Bank 电压：
+//       - XC7A200T (FBG484)：Bank 14 VCCO = 2.5V → LVDS_25
+//       - XC7A50T  (FTG256)：Bank 14 VCCO = 3.3V → LVDS_33
 genvar i;
 generate
     for (i = 0; i < 8; i = i + 1) begin : data_buffers
         IBUFDS #(
-            .DIFF_TERM("FALSE"),    // Overridden by XDC DIFF_TERM property
-            .IOSTANDARD("DEFAULT")  // Overridden by XDC IOSTANDARD property
+            .DIFF_TERM("FALSE"),    // 由 XDC DIFF_TERM 属性覆盖
+            .IOSTANDARD("DEFAULT")  // 由 XDC IOSTANDARD 属性覆盖
         ) ibufds_data (
-            .O(adc_data[i]),
-            .I(adc_d_p[i]),
-            .IB(adc_d_n[i])
+            .O(adc_data[i]),       // 单端输出
+            .I(adc_d_p[i]),        // 正端输入 P
+            .IB(adc_d_n[i])        // 负端输入 N
         );
     end
 endgenerate
 
-// IBUFDS for DCO
+// ========== DCO 时钟差分缓冲器 ==========
 IBUFDS #(
     .DIFF_TERM("FALSE"),    // Overridden by XDC DIFF_TERM property
     .IOSTANDARD("DEFAULT")  // Overridden by XDC IOSTANDARD property

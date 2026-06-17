@@ -1,35 +1,36 @@
 `timescale 1ns / 1ps
 
 /**
- * rx_gain_control.v
+ * rx_gain_control.v — 数字增益控制 + 自适应 AGC
  *
- * Digital gain control with optional per-frame automatic gain control (AGC)
- * for the receive path. Placed between DDC output and matched filter input.
+ * 【中文功能概述】
+ * 接收链路数字增益控制模块，位于 DDC 输出和匹配滤波器输入之间。
+ * 支持手动增益模式和逐帧自动增益控制（AGC）模式。
  *
- * Manual mode (agc_enable=0):
- *   - Uses host_gain_shift directly (backward-compatible, no behavioral change)
- *   - gain_shift[3]   = direction: 0 = left shift (amplify), 1 = right shift (attenuate)
- *   - gain_shift[2:0] = amount: 0..7 bits
- *   - Symmetric saturation to ±32767 on overflow
+ * 【手动模式（agc_enable=0）】
+ *   - 直接使用 host_gain_shift（向后兼容，行为不变）
+ *   - gain_shift[3]   = 方向：0=左移（放大），1=右移（衰减）
+ *   - gain_shift[2:0] = 量：0..7 位移位
+ *   - 溢出时对称饱和到 ±32767
  *
- * AGC mode (agc_enable=1):
- *   - Per-frame automatic gain adjustment based on peak/saturation metrics
- *   - Internal signed gain: -7 (max attenuation) to +7 (max amplification)
- *   - On frame_boundary:
- *       * If saturation detected: gain -= agc_attack (fast, immediate)
- *       * Else if peak < target after holdoff frames: gain += agc_decay (slow)
- *       * Else: hold current gain
- *   - host_gain_shift serves as initial gain when AGC first enabled
+ * 【AGC 模式（agc_enable=1）】
+ *   - 基于峰值/饱和度指标的逐帧自动增益调整
+ *   - 内部有符号增益：-7（最大衰减）到 +7（最大放大）
+ *   - 在帧边界(frame_boundary)时：
+//     * 检测到饱和 → gain -= agc_attack（快速降低增益）
+//     * 峰值 < 目标 且经过 holdoff 帧 → gain += agc_decay（缓慢提高）
+//     * 否则 → 保持当前增益
+//   - host_gain_shift 作为 AGC 首次启用时的初始增益
  *
- * Status outputs (for readback via status_words):
- *   - current_gain[3:0]: effective gain_shift encoding (manual or AGC)
- *   - peak_magnitude[7:0]: per-frame peak |sample| (upper 8 bits of 15-bit value)
- *   - saturation_count[7:0]: per-frame clipped sample count (capped at 255)
+ * 【状态输出（可通过状态寄存器回读）】
+//   - current_gain[3:0]：当前有效增益编码
+//   - peak_magnitude[7:0]：每帧峰值幅度 |sample| 的高 8 位
+//   - saturation_count[7:0]：每帧裁剪样本计数（上限 255）
  *
- * Timing: 1-cycle data latency, valid-in/valid-out pipeline.
+ * 【在雷达接收链中的位置】
+//   ddc_input_interface → rx_gain_control → matched_filter_multi_segment
  *
- * Insertion point in radar_receiver_final.v:
- *   ddc_input_interface → rx_gain_control → matched_filter_multi_segment
+ * 时序延迟：1 周期数据延迟，valid-in/valid-out 流水线
  */
 
 module rx_gain_control (
