@@ -1,4 +1,39 @@
 `timescale 1ns / 1ps
+
+// ============================================================================
+// 匹配滤波器模块（matched_filter_multi_segment.v）
+// ============================================================================
+// 功能概述：
+// 本模块使用重叠保留法（Overlap-Save）实现脉冲压缩（匹配滤波）。
+// 
+// 算法说明：
+// 将 3000 样本长啁啾分段为 4 个 1024 点 segment，每个 segment 做 FFT，
+// 在频域与参考啁啾相乘，然后 IFFT，去除前 128 点（重叠部分），
+// 保留 896 点（SEGMENT_ADVANCE）。
+// 
+// 处理流程（541 行代码）：
+// 1. ST_IDLE：等待新啁啾
+// 2. ST_COLLECT_DATA：收集 3000 样本
+// 3. ST_ZERO_PAD：零填充到 1024 点
+// 4. ST_WAIT_REF：等待参考啁啾数据
+// 5. ST_PROCESSING：FFT（使用 xfft_1024 IP）
+// 6. ST_WAIT_FFT：等待 FFT 完成
+// 7. ST_OUTPUT：输出脉冲压缩结果
+// 8. ST_NEXT_SEGMENT：前进到下一个 segment
+// 9. ST_OVERLAP_COPY：复制重叠部分（128 点）
+// 
+// 关键参数：
+// - BUFFER_SIZE = 1024（FFT 点数）
+// - LONG_CHIRP_SAMPLES = 3000（长啁啾样本数）
+// - SHORT_CHIRP_SAMPLES = 50（短啁啾样本数）
+// - OVERLAP_SAMPLES = 128（重叠样本数）
+// - SEGMENT_ADVANCE = 896（每个 segment 前进样本数）
+// 
+// 时钟域：clk (100 MHz)
+// 输入：ddc_i/q (18bit, 100MHz)
+// 输出：pc_i_w/q_w (16bit, 脉冲压缩后)
+// ============================================================================
+
 // matched_filter_multi_segment.v
 module matched_filter_multi_segment (
     input wire clk,           // 100MHz

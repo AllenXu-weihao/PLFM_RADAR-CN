@@ -1,5 +1,31 @@
 `timescale 1ns / 1ps
 
+// ============================================================================
+// 雷达接收机顶层模块（radar_receiver_final.v）
+// ============================================================================
+// 功能概述：
+// 本模块是 AERIS-10 雷达系统的接收机顶层，实例化完整的接收信号处理链。
+// 
+// 信号链路（500 行代码）：
+// ADC(400MHz LVDS) → ad9484_interface_400m (IDDR 双沿采样)
+//   → ddc_400m_enhanced (NCO 混频 + CIC 4x抽取 + FIR 低通)
+//     → ddc_input_interface (跨时钟域缓冲)
+//       → rx_gain_control (数字增益控制 / AGC)
+//         → matched_filter_multi_segment (脉冲压缩，重叠保留法)
+//           → range_bin_decimator (距离维抽取，1024 → 64 bin)
+//             → mti_canceller (杂波抑制，可选 3 脉冲对消)
+//               → doppler_processor (双 16 点 FFT，速度处理)
+//                 → 输出至系统顶层（供 CFAR 检测）
+// 
+// 关键参数：
+// - INPUT_BINS = 1024（输入距离 bin 数）
+// - OUTPUT_BINS = 64（输出距离 bin 数）
+// - DECIMATION_FACTOR = 16（距离维抽取因子）
+// 
+// 时钟域：clk_100m (100MHz)
+// 复位：低有效（reset_n）
+// ============================================================================
+
 module radar_receiver_final (
     input wire clk,           // 100MHz    
 	 input wire reset_n,

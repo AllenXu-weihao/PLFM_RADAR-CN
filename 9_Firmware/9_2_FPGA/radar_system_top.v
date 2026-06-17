@@ -19,6 +19,27 @@
  *   1 = FT2232H (8-bit, USB 2.0) — 50T production board
  */
 
+// ============================================================================
+// 中文说明（Chinese Notes）
+// ============================================================================
+// AERIS-10 相控阵雷达系统顶层模块
+// 
+// 主要功能模块：
+// 1. 发射机（radar_transmitter）- PLFM 啁啾生成、DAC 接口、波束控制
+// 2. 接收机（radar_receiver_final）- ADC 接口、DDC、匹配滤波、Doppler 处理
+// 3. USB 数据接口（usb_data_interface）- FT601(USB3.0) 或 FT2232H(USB2.0)
+// 4. CFAR 检测器（cfar_ca）- 自适应门限检测
+// 
+// 时钟域：
+// - clk_100m (100MHz)：系统主时钟，接收机后级处理
+// - clk_120m_dac (120MHz)：DAC 时钟，发射机
+// - ft601_clk (可变)：USB 时钟
+// 
+// 信号链路：
+// ADC(400MHz) → DDC(400→100MHz) → 增益控制 → 匹配滤波 → 距离抽取 
+//   → MTI → Doppler FFT → CFAR 检测 → USB 上传
+// ============================================================================
+
 module radar_system_top (
     // System Clocks
     input wire clk_100m,                // 100MHz system clock
@@ -135,8 +156,13 @@ module radar_system_top (
 );
 
 // ============================================================================
-// PARAMETERS
+// 参数定义（PARAMETERS）
 // ============================================================================
+// 系统配置参数：
+// - USE_LONG_CHIRP：默认使用长啁啾（远距离探测模式）
+// - DOPPLER_ENABLE：使能 Doppler 速度处理
+// - USB_ENABLE：使能 USB 数据传输
+// - USB_MODE：USB 接口选择（0=FT601 USB3.0，1=FT2232H USB2.0）
 
 // System configuration
 parameter USE_LONG_CHIRP = 1'b1;          // Default to long chirp
@@ -145,8 +171,16 @@ parameter USB_ENABLE = 1'b1;               // Enable USB data transfer
 parameter USB_MODE = 1;                    // 0=FT601 (32-bit, 200T), 1=FT2232H (8-bit, 50T production default)
 
 // ============================================================================
-// INTERNAL SIGNALS
+// 内部信号定义（INTERNAL SIGNALS）
 // ============================================================================
+// 本节定义所有模块间互连信号和内部寄存器。
+// 关键信号组：
+// - 时钟和复位（clk_100m_buf 等）
+// - CDC 同步信号（stm32_mixers_enable_100m 等）
+// - 发射机信号（tx_*）
+// - 接收机信号（rx_*）
+// - USB 数据包（usb_*）
+// - 主机命令寄存器（host_*）
 
 // Clock and reset
 wire clk_100m_buf;
@@ -292,8 +326,11 @@ wire [15:0] self_test_capture_data;
 wire       self_test_capture_valid;
 
 // ============================================================================
-// CLOCK BUFFERING
+// 时钟缓冲（CLOCK BUFFERING）
 // ============================================================================
+// 所有输入时钟通过 BUFG（全局时钟缓冲器）驱动，以减少时钟偏移和抖动。
+// - 仿真模式（`SIMULATION` 定义时）：直接连线，不使用 BUFG
+// - 综合模式：使用 BUFG 原语
 
 `ifdef SIMULATION
 // In simulation (iverilog), BUFG is not available — pass-through assigns
@@ -429,8 +466,17 @@ end
 assign tx_new_chirp_frame_sync = chirp_frame_toggle_100m ^ chirp_frame_toggle_100m_prev;
 
 // ============================================================================
-// RADAR TRANSMITTER INSTANTIATION
+// 雷达发射机实例化（RADAR TRANSMITTER INSTANTIATION）
 // ============================================================================
+// 发射机模块功能：
+// 1. PLFM 啁啾生成（线性调频信号）
+// 2. DAC 接口（驱动 AD9122 DAC）
+// 3. 波束形成器控制（ADAR1000 SPI 接口，通过电平转换器）
+// 4. 混频器使能控制
+// 5. RF 开关控制
+// 
+// 时钟域：clk_120m_dac (120MHz)
+// 复位：使用 120MHz 同步后的复位（sys_reset_120m_n）
 
 radar_transmitter tx_inst (
     // System Clocks
@@ -496,8 +542,23 @@ radar_transmitter tx_inst (
 );
 
 // ============================================================================
-// RADAR RECEIVER INSTANTIATION
+// 雷达接收机实例化（RADAR RECEIVER INSTANTIATION）
 // ============================================================================
+// 接收机模块功能：
+// 1. ADC 接口（AD9484 LVDS，400MSPS，IDDR 双沿采样）
+// 2. 数字下变频（DDC：NCO + 混频 + CIC 4x抽取 + FIR 低通）
+// 3. 增益控制（可选 AGC）
+// 4. 匹配滤波（脉冲压缩，重叠保留法）
+// 5. 距离维抽取（1024 → 64 bin）
+// 6. MTI 杂波抑制（可选 2/3 脉冲对消）
+// 7. Doppler 处理（双 16 点 FFT，Staggered-PRF）
+// 
+// 信号链路：
+// ADC(400MHz) → DDC(400→100MHz) → 增益控制 → 匹配滤波 → 距离抽取 
+//   → MTI → Doppler FFT → 输出至 CFAR
+// 
+// 时钟域：clk_100m (100MHz)
+// 复位：使用 100MHz 同步后的复位（sys_reset_n）
 
 radar_receiver_final rx_inst (
     .clk(clk_100m_buf),
